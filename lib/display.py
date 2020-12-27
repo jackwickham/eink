@@ -4,10 +4,9 @@
 # work.
 #
 # I referred to the waveshare examples to construct this. They can be found at
-# https://github.com/waveshare/e-Paper/tree/master/RaspberryPi%26JetsonNano/python
+# https://github.com/waveshare/e-Paper/tree/master/RaspberryPi_JetsonNano/python
 
 import gpiozero
-import RPi.GPIO
 from typing import Union, Iterable
 import time
 import logging
@@ -142,25 +141,26 @@ class Display:
 
             logging.debug("Shut down SPI")
 
+    def _get_pixel_value(self, pixel: bool, index: int) -> int:
+        if pixel:
+            if self.prev_image is not None and self.prev_image[index]:
+                return self.PIXEL_BLACK_NO_REFRESH
+            else:
+                return self.PIXEL_BLACK
+        else:
+            if self.prev_image is not None and not self.prev_image[index]:
+                return self.PIXEL_WHITE_NO_REFRESH
+            else:
+                return self.PIXEL_WHITE
+
     def _send_image(self, data: Iterable[bool]) -> None:
-        # Start data transmission
-        self._send_command(0x10)
         if len(data) != self.DISPLAY_WIDTH * self.DISPLAY_HEIGHT:
             logging.error("Image did not have correct dimensions")
+        # Start data transmission
+        self._send_command(0x10)
         # Then send the pixels
-        for i in range(self.DISPLAY_WIDTH * self.DISPLAY_HEIGHT):
-            pixel = 0
-            if data[i]:
-                if self.prev_image is not None and self.prev_image[i]:
-                    pixel = self.PIXEL_BLACK_NO_REFRESH
-                else:
-                    pixel = self.PIXEL_BLACK
-            else:
-                if self.prev_image is not None and not self.prev_image[i]:
-                    pixel = self.PIXEL_WHITE_NO_REFRESH
-                else:
-                    pixel = self.PIXEL_WHITE
-            self._send_data((pixel << 4) | pixel)
+        for i in range(0, self.DISPLAY_WIDTH * self.DISPLAY_HEIGHT, 2):
+            self._send_data((self._get_pixel_value(data[i], i) << 4) | self._get_pixel_value(data[i+1], i+1))
         # Display refresh
         self._send_command(0x12)
         logging.debug("sent image data")
@@ -179,4 +179,4 @@ class Display:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     display = Display()
-    display.update([True, False] * 122880)
+    display.update((([True] * (display.DISPLAY_WIDTH // 2)) + ([False] * (display.DISPLAY_WIDTH // 2))) * display.DISPLAY_HEIGHT)
