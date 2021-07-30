@@ -7,7 +7,7 @@
 # https://github.com/waveshare/e-Paper/tree/master/RaspberryPi_JetsonNano/python
 
 import gpiozero
-from typing import Union, Iterable
+from typing import Iterable, Sequence
 import time
 import logging
 import spidev
@@ -21,13 +21,14 @@ class Display:
     PIXEL_WHITE_NO_REFRESH = 0b10
     PIXEL_BLACK_NO_REFRESH = 0b01
 
-    def __init__(self):
+    def __init__(self, invert: bool = False):
         self.reset_pin = gpiozero.DigitalOutputDevice(17, active_high=False)
         self.command_mode = gpiozero.DigitalOutputDevice(
             25, active_high=False, initial_value=True)
         self.chip_select = gpiozero.DigitalOutputDevice(8, active_high=False)
         self.busy_pin = gpiozero.DigitalInputDevice(24, None, False)
 
+        self.invert = invert
         self.spi = None
         self.prev_image = None
 
@@ -61,7 +62,7 @@ class Display:
     def _enable(self) -> None:
         self.spi = spidev.SpiDev(0, 0)
         self.spi.mode = 0b00
-        self.spi.max_speed_hz = 4000000
+        self.spi.max_speed_hz = 6660000 # 150ns
 
         # Assert reset (clear any config and wake from deep sleep)
         self.reset_pin.off()
@@ -141,38 +142,47 @@ class Display:
 
             logging.debug("Shut down SPI")
 
-    def _get_pixel_value(self, pixel: bool, index: int) -> int:
-        if pixel:
+    def _get_pixel_value(self, data: Sequence[bool], index: int) -> int:
+        if self.invert:
+            index = self.DISPLAY_WIDTH * self.DISPLAY_HEIGHT - 1 - index
+        if data[index]:
             if self.prev_image is not None and self.prev_image[index]:
-                return self.PIXEL_BLACK_NO_REFRESH
-            else:
-                return self.PIXEL_BLACK
-        else:
-            if self.prev_image is not None and not self.prev_image[index]:
                 return self.PIXEL_WHITE_NO_REFRESH
             else:
                 return self.PIXEL_WHITE
+        else:
+            if self.prev_image is not None and not self.prev_image[index]:
+                return self.PIXEL_BLACK_NO_REFRESH
+            else:
+                return self.PIXEL_BLACK
 
-    def _send_image(self, data: Iterable[bool]) -> None:
+    def _send_image(self, data: Sequence[bool]) -> None:
         if len(data) != self.DISPLAY_WIDTH * self.DISPLAY_HEIGHT:
             logging.error("Image did not have correct dimensions")
         # Start data transmission
         self._send_command(0x10)
         # Then send the pixels
-        for i in range(0, self.DISPLAY_WIDTH * self.DISPLAY_HEIGHT, 2):
-            self._send_data((self._get_pixel_value(data[i], i) << 4) | self._get_pixel_value(data[i+1], i+1))
+        start = time.time()
+        raw_data = [(self._get_pixel_value(data, i) << 4) | self._get_pixel_value(data, i+1) for i in range(0, self.DISPLAY_WIDTH * self.DISPLAY_HEIGHT, 2)]
+        self._send_data(raw_data)
+        logging.debug(time.time() - start)
         # Display refresh
         self._send_command(0x12)
         logging.debug("sent image data")
-        self.prev_image = data
         # Wait for it to finish updating
         if not self._wait_for_busy(40):
             logging.warning("Busy pin didn't go low in time")
 
-    def update(self, image: Iterable[bool]) -> None:
+    def update(self, image: Sequence[bool], refresh: bool = False) -> None:
+        if refresh:
+            self.prev_image = None
+        elif image == self.prev_image:
+            logging.info("No change, not updating")
+            return
         try:
             self._enable()
             self._send_image(image)
+            self.prev_image = image
         finally:
             self._disable()
 
